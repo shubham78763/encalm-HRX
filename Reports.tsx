@@ -1,166 +1,347 @@
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { FileText, TrendingUp, Users, DollarSign, Calendar } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import api from '../utils/api';
 
-const COLORS = ['#8b5cf6', '#3b82f6', '#ec4899', '#f97316'];
 
-export default function Reports() {
-    const [attendanceData, setAttendanceData] = useState<any[]>([]);
-    const [payrollData, setPayrollData] = useState<any[]>([]);
-    const [stats, setStats] = useState<any>({});
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
 
-    //  FIX: make tenantId available globally in component
-    const tenantId = localStorage.getItem("tenantId");
+// @ts-ignore
+import { Parser } from "json2csv";
+// @ts-ignore
+import PDFDocument from "pdfkit";
+import ExcelJS from "exceljs";
 
-    useEffect(() => {
-        //  FIX: stop API call if tenantId missing
-        if (!tenantId || tenantId === "null" || tenantId === "undefined") {
-            console.error("tenantId missing or invalid");
-            return;
-        }
+const prisma = new PrismaClient();
 
-        const fetchData = async () => {
-            try {
-                const res1 = await api.get(`/reports/dashboard?tenantId=${tenantId}`);
-                const res2 = await api.get(`/reports/attendance?tenantId=${tenantId}`);
-                const res3 = await api.get(`/reports/payroll?tenantId=${tenantId}`);
+// helper..
+const getTenantId = (req: Request, res: Response) => {
+  const tenantId =
+  (req.headers["x-tenant-id"] as string) ||
+  (req.query.tenantId as string);
+  if (!tenantId) {
+    res.status(400).json({ message: "Tenant ID missing" });
+    return null;
+  }
 
-                //  FIX: normalize response safely
-                setStats(res1.data || {});
-                setAttendanceData(Array.isArray(res2.data) ? res2.data : res2.data?.data || []);
-                setPayrollData(Array.isArray(res3.data) ? res3.data : res3.data?.data || []);
+  return tenantId;
+};
 
-            } catch (err) {
-                console.error('Reports API error:', err);
-            }
-        };
+const calculateSalary = (salary: any): number => {
+  if (!salary) return 0;
+  return (salary.basic || 0) + (salary.hra || 0) + (salary.special || 0) + (salary.medical || 0);
+};
 
-        fetchData();
-    }, [tenantId]);
 
-    return (
-        <div className="animate-fade-in-up pb-8">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Reports & Analytics</h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-8">Comprehensive insights into workforce performance and payroll.</p>
 
-            {/* Top Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-white dark:bg-brand-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase">Total Payroll</p>
-                            <h3 className="text-2xl font-bold text-gray-800 dark:text-white mt-1">₹ {stats?.totalPayroll || 0}</h3>
-                        </div>
-                        <div className="w-10 h-10 bg-green-100 text-green-600 rounded-xl flex items-center justify-center">
-                            <DollarSign size={20} />
-                        </div>
-                    </div>
-                    <div className="mt-4 flex items-center gap-1 text-xs font-medium text-green-600">
-                        <TrendingUp size={14} /> {stats?.payrollGrowth || '0%'} from last month
-                    </div>
-                </div>
 
-                <div className="bg-white dark:bg-brand-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase">Avg. Attendance</p>
-                            <h3 className="text-2xl font-bold text-gray-800 dark:text-white mt-1">{stats?.avgAttendance || 0}%</h3>
-                        </div>
-                        <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
-                            <Users size={20} />
-                        </div>
-                    </div>
-                    <div className="mt-4 flex items-center gap-1 text-xs font-medium text-blue-600">
-                        <TrendingUp size={14} /> {stats?.attendanceTrend || 'No data'}
-                    </div>
-                </div>
 
-                <div className="bg-white dark:bg-brand-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 flex flex-col justify-between">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase">Pending Leaves</p>
-                            <h3 className="text-2xl font-bold text-gray-800 dark:text-white mt-1">{stats?.pendingLeaves || 0}</h3>
-                        </div>
-                        <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center">
-                            <Calendar size={20} />
-                        </div>
-                    </div>
-                    <div className="mt-4 text-xs font-medium text-orange-600">
-                        {stats?.leaveStatus || 'No data'}
-                    </div>
-                </div>
-            </div>
 
-            {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                <div className="bg-white dark:bg-brand-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-white/5">
-                    <h3 className="font-bold text-gray-800 dark:text-white mb-6">Weekly Attendance</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={attendanceData}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 12 }} dy={10} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                                <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
-                                <Bar dataKey="present" stackId="a" fill="#8b5cf6" radius={[0, 0, 4, 4]} barSize={40} />
-                                <Bar dataKey="absent" stackId="a" fill="#ef4444" radius={[0, 0, 0, 0]} barSize={40} />
-                                <Bar dataKey="late" stackId="a" fill="#f97316" radius={[4, 4, 0, 0]} barSize={40} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
+// ================= DASHBOARD =================
+export const getDashboard = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
 
-                <div className="bg-white dark:bg-brand-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-white/5">
-                    <h3 className="font-bold text-gray-800 dark:text-white mb-6">Department Payroll</h3>
-                    <div className="h-64 flex items-center justify-center">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie data={payrollData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                    {Array.isArray(payrollData) && payrollData.map((_, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                            </PieChart>
-                        </ResponsiveContainer>
-                        <div className="space-y-2 ml-4">
-                            {Array.isArray(payrollData) && payrollData.map((entry, index) => (
-                                <div key={entry.name} className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index] }}></div>
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">{entry.name}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { salary: true }
+    });
 
-            {/* Quick Exports */}
-            <div className="bg-brand-600 rounded-2xl p-8 text-white relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+    let totalPayroll = 0;
+    employees.forEach(emp => {
+      if (emp.salary) totalPayroll += calculateSalary(emp.salary);
+    });
 
-                <div className="relative z-10">
-                    <h3 className="text-xl font-bold mb-4">Generate Reports</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div onClick={() => window.open(`${api.defaults.baseURL}/reports/export/attendance?tenantId=${tenantId}`)} className="bg-white/10 hover:bg-white/20 transition-colors p-4 rounded-xl cursor-pointer backdrop-blur-sm border border-white/10">
-                            <FileText size={24} className="mb-3 opacity-80" />
-                            <h4 className="font-bold text-sm">Monthly Attendance</h4>
-                            <p className="text-xs opacity-70 mt-1">Download CSV</p>
-                        </div>
-                        <div onClick={() => window.open(`${api.defaults.baseURL}/reports/export/salary?tenantId=${tenantId}`)} className="bg-white/10 hover:bg-white/20 transition-colors p-4 rounded-xl cursor-pointer backdrop-blur-sm border border-white/10">
-                            <DollarSign size={24} className="mb-3 opacity-80" />
-                            <h4 className="font-bold text-sm">Salary Register</h4>
-                            <p className="text-xs opacity-70 mt-1">Download PDF</p>
-                        </div>
-                        <div onClick={() => window.open(`${api.defaults.baseURL}/reports/export/leave?tenantId=${tenantId}`)} className="bg-white/10 hover:bg-white/20 transition-colors p-4 rounded-xl cursor-pointer backdrop-blur-sm border border-white/10">
-                            <Calendar size={24} className="mb-3 opacity-80" />
-                            <h4 className="font-bold text-sm">Leave Balance</h4>
-                            <p className="text-xs opacity-70 mt-1">Export Excel</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+    // ✅ AVG ATTENDANCE — working days based, capped at 100
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayStr = firstDayOfMonth.toISOString().split('T')[0];
+    const todayStr = today.toISOString().split('T')[0];
+
+    const attendance = await prisma.attendanceRecord.findMany({
+      where: {
+        tenantId,
+        date: { gte: firstDayStr, lte: todayStr }
+      }
+    });
+
+    const totalEmployees = employees.length;
+
+    // Count working days elapsed this month (Mon-Fri)
+    let workingDaysElapsed = 0;
+    const cursor = new Date(firstDayOfMonth);
+    while (cursor <= today) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) workingDaysElapsed++;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    const totalExpected = workingDaysElapsed * totalEmployees;
+    const presentCount = attendance.filter(a => {
+      const s = String(a.status).toLowerCase();
+      return s === 'present' || s === 'late';
+    }).length;
+
+    const avgAttendance = totalExpected > 0
+      ? Math.min(100, Math.round((presentCount / totalExpected) * 100))
+      : 0;
+
+    const leaves = await prisma.leave.findMany({
+      where: { tenantId }
+    });
+
+    const pendingLeaves = leaves.filter(l =>
+      String(l.status).toLowerCase() === "pending"
+    ).length;
+
+    return res.json({
+      totalPayroll,
+      avgAttendance,
+      pendingLeaves,
+      payrollGrowth: "+5%",
+      attendanceTrend: "Stable",
+      leaveStatus: "Needs Attention"
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Dashboard error" });
+  }
+};
+
+// ================= ATTENDANCE =================
+export const getAttendance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: { tenantId }
+    });
+
+    const map: any = {};
+
+    records.forEach(r => {
+      const day = new Date(r.date).toLocaleDateString("en-US", { weekday: "short" });
+
+      if (!map[day]) {
+        map[day] = { name: day, present: 0, absent: 0, late: 0 };
+      }
+
+      const status = (r.status || "").toUpperCase();
+
+      if (status === "PRESENT") map[day].present++;
+      else if (status === "ABSENT") map[day].absent++;
+      else if (status === "LATE") map[day].late++;
+    });
+
+    return res.json(Object.values(map));
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Attendance error" });
+  }
+};
+
+
+
+// ================= PAYROLL =================
+export const getPayroll = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { salary: true }
+    });
+
+    const deptMap: any = {};
+
+    employees.forEach(emp => {
+      const dept = emp.department || "Unknown";
+
+      if (!deptMap[dept]) deptMap[dept] = 0;
+
+      if (emp.salary) {
+        deptMap[dept] += calculateSalary(emp.salary);
+      }
+    });
+
+    const result = Object.entries(deptMap).map(([name, value]) => ({
+      name,
+      value
+    }));
+
+    return res.json(result);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Payroll error" });
+  }
+};
+
+
+
+// ================= CSV EXPORT =================
+export const exportMonthlyAttendance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const data = await prisma.attendanceRecord.findMany({
+      where: { tenantId }
+    });
+
+    if (!data.length) return res.send("No attendance data");
+
+    const formatted = data.map(a => ({
+      userId: a.userId,
+      date: new Date(a.date).toLocaleDateString("en-GB"),
+      status: a.status,
+      hours: a.hours || 0
+    }));
+
+    const parser = new Parser({
+      fields: ["userId", "date", "status", "hours"]
+    });
+
+    const csv = parser.parse(formatted);
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=attendance.csv");
+
+    return res.send(csv);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("CSV export error");
+  }
+};
+
+
+
+// ================= PDF EXPORT =================
+export const exportSalaryRegister = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { user: true, salary: true }
+    });
+
+    const doc = new PDFDocument();
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "attachment; filename=salary.pdf");
+
+    doc.pipe(res);
+
+    doc.fontSize(18).text("Salary Register", { align: "center" });
+    doc.moveDown();
+
+    employees.forEach(emp => {
+      const salary = calculateSalary(emp.salary);
+
+      doc.text(`Name: ${emp.user.name}`);
+      doc.text(`Department: ${emp.department}`);
+      doc.text(`Salary: ₹ ${salary}`);
+      doc.moveDown();
+    });
+
+    doc.end();
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "PDF export error" });
+  }
+};
+
+
+
+// ================= EXCEL EXPORT =================
+export const exportLeaveBalance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const leaves = await prisma.leave.findMany({
+      where: { tenantId },
+      include: { user: true }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Leaves");
+
+    sheet.columns = [
+      { header: "Employee", key: "name", width: 20 },
+      { header: "Status", key: "status", width: 15 },
+      { header: "Start Date", key: "start", width: 20 },
+      { header: "End Date", key: "end", width: 20 }
+    ];
+
+    leaves.forEach(l => {
+      sheet.addRow({
+        name: l.user.name,
+        status: l.status,
+        start: l.startDate,
+        end: l.endDate
+      });
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-}
+
+    res.setHeader("Content-Disposition", "attachment; filename=leave.xlsx");
+
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Excel export error" });
+  }
+};
+
+// ===========v====== TEST CREATE APIs =================
+export const createAttendance = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.attendanceRecord.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createLeave = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.leave.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createEmployeeProfile = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.employeeProfile.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createSalary = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.salaryStructure.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
